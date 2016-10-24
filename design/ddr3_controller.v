@@ -150,7 +150,7 @@ module ddr3_controller(
 	// DDR2 Initialization engine
 	ddr3_init_engine XINIT (
 						   // Outputs
-						   .ready				(ready_i),
+						   .ready				(ready),
 						   .csbar				(init_csbar),
 						   .rasbar				(init_rasbar),
 						   .casbar				(init_casbar),
@@ -184,12 +184,11 @@ module ddr3_controller(
 							.DQS_out			(dqs_i[1:0]), 
 							.DQ_out				(dq_i[15:0]),
 							.ts_con				(ts_con),
-							.modify_setting     (modify_setting),
 							// Inputs
 							.clk				(clk), 
 							.ck					(ck_i), 
 							.reset				(reset), 
-							.ready				(ready_i), 
+							.ready				(ready), 
 							.CMD_empty			(CMD_empty), 
 							.CMD_data_out		(CMD_data_out),
 							.DATA_data_out		(IN_data_out),
@@ -238,16 +237,15 @@ module ddr3_controller(
 	assign		 dout		  = RETURN_data_out[15:0];
 	assign		 validout     = !RETURN_empty;
 	assign		 notfull	  = !IN_full && !CMD_full;
-	assign		 ready        = ready_i && modify_setting;
 	
 	// Output Mux for control signals
-	assign		 ts_i     = (ready_i) ? ts_con : init_ts_con;
-	assign 		 a_i 	  = (ready_i) ? a      : init_a;
-	assign 		 ba_i 	  = (ready_i) ? ba     : init_ba;
-	assign 		 csbar_i  = (ready_i) ? csbar  : init_csbar;
-	assign 		 rasbar_i = (ready_i) ? rasbar : init_rasbar;
-	assign 		 casbar_i = (ready_i) ? casbar : init_casbar;
-	assign 		 webar_i  = (ready_i) ? webar  : init_webar;	
+	assign		 ts_i     = (ready) ? ts_con : init_ts_con;
+	assign 		 a_i 	  = (ready) ? a      : init_a;
+	assign 		 ba_i 	  = (ready) ? ba     : init_ba;
+	assign 		 csbar_i  = (ready) ? csbar  : init_csbar;
+	assign 		 rasbar_i = (ready) ? rasbar : init_rasbar;
+	assign 		 casbar_i = (ready) ? casbar : init_casbar;
+	assign 		 webar_i  = (ready) ? webar  : init_webar;	
 	assign		 resetbar_i = init_resetbar && ~reset;
 	assign		 dqsbar_i = ~dqs_i;
 	assign 		 cke_i 	  = init_cke;

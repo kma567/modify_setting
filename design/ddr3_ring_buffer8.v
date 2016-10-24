@@ -21,7 +21,7 @@ module ddr2_ring_buffer8(dout,listen,strobe,readPtr,din,reset);
    reg [15:0] 	 r0, r1, r2, r3, r4, r5, r6, r7;
    reg 			 F0;
    wire 		 fStrobe, fStrobeBar;
-   reg [1:0] 	 count;
+   reg [2:0] 	 count;
 
 // Delayline for strobe   
 // --------------------
