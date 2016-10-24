@@ -124,7 +124,7 @@ module Processing_logic(
 always @(posedge clk)
     if (reset)
 	begin
-		modify_setting <= 1;
+		modify_setting <= 1; // modify is not implemented
 		
 	    counter <= 0;
 		state <= INIT;
@@ -172,7 +172,7 @@ always @(posedge clk)
 			
 			MODIFY:
 			begin
-				counter <= counter + 1;
+				counter <= counter + 1; // waiting to be done
 				/* case (counter)
 				
 				`M_MRS2: begin
