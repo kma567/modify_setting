@@ -37,7 +37,7 @@ module ddr3_init_engine(
 input clk, reset, init, ck;
 output ready, csbar, rasbar, casbar, webar, odt, ts_con, cke, resetbar;
 output [2:0] ba;
-output [13:0] a;
+output [12:0] a;
 
 reg ready;
 reg cke;
@@ -47,7 +47,7 @@ reg casbar;
 reg webar;
 reg resetbar;
 reg [2:0] ba;
-reg [13:0] a;
+reg [12:0] a;
 reg odt;
 reg [15:0] dq_out;
 reg [1:0] dqs_out;
@@ -112,7 +112,7 @@ begin
 
        	`S_MRS2: begin
                 	{csbar, rasbar, casbar, webar} <= MRS; // EMRS command
-					a[13:11] <= 0;
+					a[12:11] <= 0;
                 	a[10:9] <= 0; // Dynamic ODT disabled
 					a[8] <= 0;
 					a[7:6] <= 0; // normal self-refresh
@@ -130,8 +130,7 @@ begin
         `S_NOP3: {csbar, rasbar, casbar, webar} <= NOP; // NOP command
 
         `S_MRS1: begin
-        	        {csbar, rasbar, casbar, webar} <= MRS; // EMRS command
-        	        a[13] <= 0; 
+        	        {csbar, rasbar, casbar, webar} <= MRS; // EMRS command 
 					a[12] <= 0; // Output enabled
 					a[11] <= 0; // TDQS enabled for 8 banks
 					a[10] <= 0;
@@ -147,7 +146,6 @@ begin
 
         `S_MRS0: begin
         	        {csbar, rasbar, casbar, webar} <= MRS; // EMRS command 
-					a[13] <= 0; 
         	        a[12] <= 0; // DLL off
                		a[11:9] <= 3'b010; // Write Recovery = 6
                 	a[8] <= 1; // DLL Reset

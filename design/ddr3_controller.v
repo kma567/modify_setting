@@ -31,7 +31,7 @@ module ddr3_controller(
 	output [15:0] dout;
 	output [25:0] raddr;
 	output [5:0]  fillcount;
-	output		 validout;
+	output reg	 validout;
 	output 		 notfull;
 	input 		 initddr;
 	output 		 ready;
@@ -44,7 +44,7 @@ module ddr3_controller(
 	output 		 casbar_pad;
 	output 		 webar_pad;
 	output [2:0]  ba_pad;
-	output [13:0] a_pad;
+	output [12:0] a_pad;
 	inout [15:0]  dq_pad;
 	inout [1:0]  dqs_pad;
 	inout [1:0]  dqsbar_pad;
@@ -58,7 +58,7 @@ module ddr3_controller(
 	wire [15:0]		dq_o;					// From XSSTL of SSTL18DDR2INTERFACE.v
 	wire [1:0]		dqs_o;					// From XSSTL of SSTL18DDR2INTERFACE.v
 	wire [1:0]		dqsbar_o;				// From XSSTL of SSTL18DDR2INTERFACE.v
-	wire			notfull, validout;				// From XDFIN of fifo.v
+	wire			notfull;				// From XDFIN of fifo.v
 	wire [5:0]		CMD_fillcount, RETURN_fillcount;		// From XDFIN of fifo.v
 	wire [5:0]		fillcount;
 	// End of automatics
@@ -72,7 +72,7 @@ module ddr3_controller(
 	wire 		 casbar_i;
 	wire 		 webar_i;
 	wire [2:0] 	 ba_i;
-	wire [13:0]  a_i;
+	wire [12:0]  a_i;
 	wire [15:0]  dq_i;
 	wire [1:0] 	 dqs_i;
 	wire [1:0] 	 dqsbar_i;
@@ -86,7 +86,7 @@ module ddr3_controller(
 	wire 		webar, init_webar;
 	wire 		resetbar, init_resetbar;
 	wire [2:0] 	ba, init_ba;
-	wire [13:0]	a,init_a;
+	wire [12:0]	a,init_a;
 	wire [1:0] 	init_dm;
 	wire 		init_cke;
 	wire 		init_ts_con;
@@ -150,13 +150,13 @@ module ddr3_controller(
 	// DDR2 Initialization engine
 	ddr3_init_engine XINIT (
 						   // Outputs
-						   .ready				(ready),
+						   .ready				(ready_i),
 						   .csbar				(init_csbar),
 						   .rasbar				(init_rasbar),
 						   .casbar				(init_casbar),
 						   .webar				(init_webar),
 						   .ba					(init_ba[2:0]),
-						   .a					(init_a[13:0]),
+						   .a					(init_a[12:0]),
 						   .odt					(init_odt),
 						   .ts_con				(init_ts_con),
 						   .cke                 (init_cke),
@@ -179,16 +179,17 @@ module ddr3_controller(
 							.cas_bar			(casbar), 
 							.we_bar				(webar), 
 							.BA					(ba[2:0]),
-							.A					(a[13:0]), 
+							.A					(a[12:0]), 
 							.DM					(dm_i[1:0]),
 							.DQS_out			(dqs_i[1:0]), 
 							.DQ_out				(dq_i[15:0]),
 							.ts_con				(ts_con),
+							.modify_setting     (modify_setting),
 							// Inputs
 							.clk				(clk), 
 							.ck					(ck_i), 
 							.reset				(reset), 
-							.ready				(ready), 
+							.ready				(ready_i), 
 							.CMD_empty			(CMD_empty), 
 							.CMD_data_out		(CMD_data_out),
 							.DATA_data_out		(IN_data_out),
@@ -229,23 +230,34 @@ module ddr3_controller(
 			endcase
 		end
 	end
+	
+	// validout
+	always @(posedge clk)
+	begin
+		if (reset)
+			validout <= 0;
+		else
+			validout <= !RETURN_empty;
+	end
+		
+		
 
 	// FIFO signals
 	assign		 CMD_data_in  = {cmd, addr, sz, op};
 	assign		 RETURN_get	  = read;
 	assign		 raddr        = RETURN_data_out[41:16];
 	assign		 dout		  = RETURN_data_out[15:0];
-	assign		 validout     = !RETURN_empty;
 	assign		 notfull	  = !IN_full && !CMD_full;
+	assign		 ready        = ready_i && modify_setting;
 	
 	// Output Mux for control signals
-	assign		 ts_i     = (ready) ? ts_con : init_ts_con;
-	assign 		 a_i 	  = (ready) ? a      : init_a;
-	assign 		 ba_i 	  = (ready) ? ba     : init_ba;
-	assign 		 csbar_i  = (ready) ? csbar  : init_csbar;
-	assign 		 rasbar_i = (ready) ? rasbar : init_rasbar;
-	assign 		 casbar_i = (ready) ? casbar : init_casbar;
-	assign 		 webar_i  = (ready) ? webar  : init_webar;	
+	assign		 ts_i     = (ready_i) ? ts_con : init_ts_con;
+	assign 		 a_i 	  = (ready_i) ? a      : init_a;
+	assign 		 ba_i 	  = (ready_i) ? ba     : init_ba;
+	assign 		 csbar_i  = (ready_i) ? csbar  : init_csbar;
+	assign 		 rasbar_i = (ready_i) ? rasbar : init_rasbar;
+	assign 		 casbar_i = (ready_i) ? casbar : init_casbar;
+	assign 		 webar_i  = (ready_i) ? webar  : init_webar;	
 	assign		 resetbar_i = init_resetbar && ~reset;
 	assign		 dqsbar_i = ~dqs_i;
 	assign 		 cke_i 	  = init_cke;
@@ -262,7 +274,7 @@ module ddr3_controller(
 							  .casbar_pad		(casbar_pad),
 							  .webar_pad		(webar_pad),
 							  .ba_pad			(ba_pad[2:0]),
-							  .a_pad			(a_pad[13:0]),
+							  .a_pad			(a_pad[12:0]),
 							  .dm_pad			(dm_pad[1:0]),
 							  .odt_pad			(odt_pad),
 							  .resetbar_pad		(resetbar_pad),
@@ -283,7 +295,7 @@ module ddr3_controller(
 							  .casbar_i			(casbar_i),
 							  .webar_i			(webar_i),
 							  .ba_i				(ba_i[2:0]),
-							  .a_i				(a_i[13:0]),
+							  .a_i				(a_i[12:0]),
 							  .dq_i				(dq_i[15:0]),
 							  .dqs_i			(dqs_i[1:0]),
 							  .dqsbar_i			(dqsbar_i[1:0]),
