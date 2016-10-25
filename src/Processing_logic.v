@@ -409,7 +409,7 @@ always @(posedge clk)
 				
 			
 
-ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in, Pointer[2:0], DQ_in, reset);
+ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in[0], Pointer[2:0], DQ_in, reset);
 
 
 always @(negedge clk)
