@@ -9,7 +9,7 @@
 `timescale 1ns/10ps
 
 
-module ddr2_ring_buffer8(dout,listen,strobe,readPtr,din,reset);
+module ddr3_ring_buffer8(dout,listen,strobe,readPtr,din,reset);
    input listen;   // A cycle long pulse after which ring buffer would start paying attention towards the incoming strobe
    input strobe;   // After listen the ring buffer would capture 4 data at every edges of strobe
    input reset;

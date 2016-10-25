@@ -1,38 +1,31 @@
 `define  T_RL	   	16
 `define  T_WL      	16
-`define  T_RCD     	10
+`define  T_RCD   	2	// AL = 3
 `define  T_RP	   	10
 `define  T_WIDTH 	2
 `define  T_MRD		6
 `define  T_MOD		30
+`define  T_RLL		1024
 `define  T_ZQCS   	128
 
-`define	 M_MRS2		0	// Set MR2
-`define  M_NOP2 	`M_MRS2+`T_WIDTH // NOP after MRS2
-`define  M_MRS3		`M_NOP2+`T_MRD // Set MR3 
-`define  M_NOP3		`M_MRS3+`T_WIDTH // NOP after MRS3
-`define  M_MRS1		`M_NOP3+`T_MRD // Set MR1 with DLL Set
-`define  M_NOP4		`M_MRS1+`T_WIDTH // NOP after DLL Set
-`define  M_MRS0		`M_NOP4+`T_MRD // Set MR0 with DLL Reset
-`define  M_NOP5		`M_MRS0+`T_WIDTH // NOP after DLL Reset
-`define  M_ZQCS		`M_NOP5+`T_MOD // Send ZQCS
-`define  M_NOP6		`M_ZQCS+`T_WIDTH // NOP after ZQCS
+`define	 M_PRE		0	// PRE
+`define  M_NOP1 	`M_PRE+`T_WIDTH // NOP after PRE
+`define  M_MRS1		`M_NOP1+`T_RP // Set MR1 with DLL Set
+`define  M_NOP2		`M_MRS1+`T_WIDTH // NOP after DLL Set
+`define  M_MRS0		`M_NOP2+`T_MRD // Set MR0 with DLL Reset
+`define  M_NOP3		`M_MRS0+`T_WIDTH // NOP after DLL Reset
+`define  M_ZQCS		`M_NOP3+`T_MOD // Send ZQCS
+`define  M_NOP4		`M_ZQCS+`T_WIDTH // NOP after ZQCS
 
-`define	 MR_MRS2	`M_NOP6+`T_ZQCS // Set MR2
-`define  MR_NOP2 	`MR_MRS2+`T_WIDTH // NOP after MRS2
-`define  MR_MRS3	`MR_NOP2+`T_MRD // Set MR3 
-`define  MR_NOP3	`MR_MRS3+`T_WIDTH // NOP after MRS3
-`define  MR_MRS1	`MR_NOP3+`T_MRD // Set MR1 with DLL Set
-`define  MR_NOP4	`MR_MRS1+`T_WIDTH // NOP after DLL Set
-`define  MR_MRS0	`MR_NOP4+`T_MRD // Set MR0 with DLL Reset
-`define  MR_NOP5	`MR_MRS0+`T_WIDTH // NOP after DLL Reset
-`define  MR_ZQCS	`MR_NOP5+`T_MOD // Send ZQCS
-`define  MR_NOP6	`MR_ZQCS+`T_WIDTH // NOP after ZQCS
-`define  MR_DONE	`MR_NOP6+`T_ZQCS // Setting Modified
+`define  MR_MRS1	`M_NOP4+`T_ZQCS // Set MR1 with DLL Set
+`define  MR_NOP1	`MR_MRS1+`T_WIDTH // NOP after DLL Set
+`define  MR_MRS0	`MR_NOP1+`T_MRD // Set MR0 with DLL Reset
+`define  MR_NOP2	`MR_MRS0+`T_WIDTH // NOP after DLL Reset
+`define  MR_DONE	`MR_NOP2+`T_RLL // DONE
 
 `define  SCR_READ	`T_RCD+1
 `define  SCR_NOP	`SCR_READ+2
-`define  SCR_LSN	`SCR_NOP+`T_RL-3
+`define  SCR_LSN	`SCR_NOP+`T_RL-2
 `define  SCR_LSNB	`SCR_LSN+1
 `define  SCR_DONE	`SCR_LSNB+8+`T_RP
 
@@ -89,7 +82,7 @@ module Processing_logic(
 	
 	reg [2:0] Pointer;
 	reg [3:0] state;
-	reg	[8:0] counter;
+	reg	[11:0] counter;
 	
 	//reg [25:0] CMD_addr ;
 	
@@ -117,6 +110,7 @@ module Processing_logic(
 		ACT			= 4'b0011,
 		READ		= 4'b0101,
 		WRITE		= 4'b0100,
+		PRE			= 4'b0010,
 		MRS			= 4'b0000,
 		ZQCS		= 4'b0110;	
 		
@@ -124,7 +118,7 @@ module Processing_logic(
 always @(posedge clk)
     if (reset)
 	begin
-		modify_setting <= 1; // modify is not implemented
+		modify_setting <= 0;
 		
 	    counter <= 0;
 		state <= INIT;
@@ -151,11 +145,11 @@ always @(posedge clk)
 			begin
 				if (ready)
 				begin
-					if (counter == 0)
+					if (!counter[0])
 					begin
-						if (!modify_setting && !ck)
+						if (!modify_setting)
 							state <= MODIFY;
-						else if (!CMD_empty && !RETURN_full)
+						if (!CMD_empty && !RETURN_full)
 						begin
 							CMD_get <= 1;	
 							counter <= counter + 1;
@@ -164,135 +158,102 @@ always @(posedge clk)
 					else
 					begin
 						CMD_get <= 0;
-						state <= DECODE;
 						counter <= 0;
+						state <= DECODE;
 					end
 				end
 			end
 			
 			MODIFY:
 			begin
-				counter <= counter + 1; // waiting to be done
-				/* case (counter)
-				
-				`M_MRS2: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command
-							A[12:11] <= 0;
-							A[10:9] <= 1; // Dynamic ODT enabled
-							A[8] <= 0;
-							A[7:6] <= 0; // normal self-refresh
-							A[5:3] <= 3'b000; // CAS write latency = 5
-							A[2:0] <= 0;
-							BA <= 3'b010;
+				counter <= counter + 1;
+				 case (counter)
+				 
+					`M_PRE:  begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= PRE; // EMRS command
+								A[10] <= 1;
+							 end
+							 
+					`M_NOP1: begin
+								{cs_bar,ras_bar,cas_bar,we_bar} <= NOP;
+							 end
+							 
+					`M_MRS1: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command 
+								A[12] <= 0; // Output enabled
+								A[11] <= 0; // TDQS enabled for 8 banks
+								A[10] <= 0;
+								{A[9], A[6], A[2]} <= 3'b001; // A[9,6,2] RTT disabled
+								A[8] <= 0;
+								A[7] <= 0; // write leveling disabled					 
+								{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
+								A[4:3] <= 2'b01; // AL = CL - 1 = 4
+								A[0] <= 0; // DLL enabled
+								BA <= 3'b001;
 							end
-				`M_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+							
+					`M_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
 
-				`M_MRS3: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command 
-							A <= 0;  // MPR disabled
-							BA <= 3'b011;
+					`M_MRS0: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
+								A[12] <= 0; // DLL off
+								A[11:9] <= 3'b010; // Write Recovery = 6
+								A[8] <= 1; // DLL Reset
+								A[7] <= 0;
+								A[6:4] <= 3'b001; // CAS latency = 5
+								A[3] <= 0; // Read type = sequential
+								A[2] <= 0;
+								A[1:0] <= 2'b10; // Burst length = 4;
+								BA <= 3'b000; // MRS
 							end
-				`M_NOP3: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+								
+					`M_NOP3: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
 
-				`M_MRS1: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command 
-							A[12] <= 0; // Output enabled
-							A[11] <= 0; // TDQS enabled for 8 banks
-							A[10] <= 0;
-							{A[9], A[6], A[2]} <= 3'b000; // A[9,6,2] RTT disabled
-							A[8] <= 0;
-							A[7] <= 0; // write leveling disabled					 
-							{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
-							A[4:3] <= 2'b01; // AL = CL - 1 = 4
-							A[0] <= 0; // DLL enabled
-							BA <= 3'b001;
+					`M_ZQCS: begin
+							{cs_bar, ras_bar, cas_bar, we_bar} <= ZQCS; 
+							A[10] <= 0; 
 							end
-				`M_NOP4: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+							
+					`M_NOP4: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command	
 
-				`M_MRS0: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
-							A[12] <= 0; // DLL off
-							A[11:9] <= 3'b010; // Write Recovery = 6
-							A[8] <= 1; // DLL Reset
-							A[7] <= 0;
-							A[6:4] <= 3'b001; // CAS latency = 5
-							A[3] <= 0; // Read type = sequential
-							A[2] <= 0;
-							A[1:0] <= 2'b10; // Burst length = 4;
-							BA <= 3'b000; // MRS
+					`MR_MRS1: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command
+								A[12] <= 0; // Output enabled
+								A[11] <= 0; // TDQS enabled for 8 banks
+								A[10] <= 0;
+								{A[9], A[6], A[2]} <= 3'b000; // A[9,6,2] RTT disabled
+								A[8] <= 0;
+								A[7] <= 0; // write leveling disabled					 
+								{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
+								A[4:3] <= 2'b10; // AL = CL - 2 = 3
+								A[0] <= 0; // DLL enabled
+								BA <= 3'b001;
 							end
-				`M_NOP5: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+							
+					`MR_NOP1: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
 
-
-				`M_ZQCS: begin
-						{cs_bar, ras_bar, cas_bar, we_bar} <= ZQCS; 
-						A[10] <= 0; 
-						end
-				`M_NOP6: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-				
-				`MR_MRS2: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command
-							A[12:11] <= 0;
-							A[10:9] <= 0; // Dynamic ODT disabled
-							A[8] <= 0;
-							A[7:6] <= 0; // normal self-refresh
-							A[5:3] <= 3'b000; // CAS write latency = 5
-							A[2:0] <= 0;
-							BA <= 3'b010;
+					`MR_MRS0: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
+								A[12] <= 0; // DLL off
+								A[11:9] <= 3'b010; // Write Recovery = 6
+								A[8] <= 1; // DLL Reset
+								A[7] <= 0;
+								A[6:4] <= 3'b001; // CAS latency = 5
+								A[3] <= 0; // Read type = sequential
+								A[2] <= 0;
+								A[1:0] <= 2'b00; // Burst length = 8;
+								BA <= 3'b000; // MRS
 							end
-				`MR_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-
-				`MR_MRS3: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command 
-							A <= 0;  // MPR disabled
-							BA <= 3'b011;
-							end
-				`MR_NOP3: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-
-				`MR_MRS1: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command
-							A[12] <= 0; // Output enabled
-							A[11] <= 0; // TDQS enabled for 8 banks
-							A[10] <= 0;
-							{A[9], A[6], A[2]} <= 3'b000; // A[9,6,2] RTT disabled
-							A[8] <= 0;
-							A[7] <= 0; // write leveling disabled					 
-							{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
-							A[4:3] <= 2'b10; // AL = CL - 2 = 3
-							A[0] <= 0; // DLL enabled
-							BA <= 3'b001;
-							end
-				`MR_NOP4: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-
-				`MR_MRS0: begin
-							{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
-							A[12] <= 0; // DLL off
-							A[11:9] <= 3'b010; // Write Recovery = 6
-							A[8] <= 1; // DLL Reset
-							A[7] <= 0;
-							A[6:4] <= 3'b001; // CAS latency = 5
-							A[3] <= 0; // Read type = sequential
-							A[2] <= 0;
-							A[1:0] <= 2'b00; // Burst length = 8;
-							BA <= 3'b000; // MRS
-							end
-				`MR_NOP5: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-
-
-				`MR_ZQCS: begin
-						{cs_bar, ras_bar, cas_bar, we_bar} <= ZQCS; 
-						A[10] <= 0; 
-						end
-				`MR_NOP6: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
-				
-				`MR_DONE: begin
-					{cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // Finally done - Just send NOPs
-					state <= INIT; // done
-					modify_setting <= 1;
-					counter <= 0;
-					end
+								
+					`MR_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
 					
-				endcase */
+					`MR_DONE: begin
+						state <= INIT; // done
+						modify_setting <= 1;
+						counter <= 0;
+						end
+					
+				endcase
 			end
 			
 			DECODE:
@@ -318,7 +279,7 @@ always @(posedge clk)
 			ACTIVATE:
 			begin
 				counter <= counter + 1;
-				if (counter)
+				if (counter[0])
 				begin
 					{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
 					case (CMD_data_out[33:31])
@@ -351,27 +312,30 @@ always @(posedge clk)
 						{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
 					end
 					
+/* 					`SCR_LSN:
+					begin
+						Pointer <= 0;					
+					end */
+					
 					`SCR_LSN:
 					begin
 						listen <= 1;
-						Pointer <= 0;					
 					end
 					
 					`SCR_LSNB:
 					begin
 						listen <= 0;
-					end
-					
-					`SCR_LSNB+1:
-					begin
-						RETURN_put <= 1;
 						RETURN_address <= CMD_data_out[30:5];
 					end
 					
-					`SCR_LSNB+2, `SCR_LSNB+3, `SCR_LSNB+4, `SCR_LSNB+5, `SCR_LSNB+6, `SCR_LSNB+7, `SCR_LSNB+8:
+					`SCR_LSNB+2:
 					begin
-						if (RETURN_put)
-							RETURN_put <= 0;
+						RETURN_put <= 1;
+					end
+					`SCR_LSNB+3: 
+					//`SCR_LSNB+4, `SCR_LSNB+5, `SCR_LSNB+6, `SCR_LSNB+7, `SCR_LSNB+8:
+					begin
+						RETURN_put <= 0;
 					end			
 					
 					`SCR_DONE:
@@ -450,7 +414,7 @@ always @(posedge clk)
 				
 			
 
-ddr2_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in[0], Pointer[2:0], DQ_in, reset);
+ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in[0], Pointer[2:0], DQ_in, reset);
 
 
 always @(negedge clk)

@@ -1,308 +1,426 @@
+`define  T_RL	   	16
+`define  T_WL      	16
+`define  T_RCD   	2	// AL = 3
+`define  T_RP	   	10
+`define  T_WIDTH 	2
+`define  T_MRD		6
+`define  T_MOD		30
+`define  T_RLL		1024
+`define  T_ZQCS   	128
 
-module ddr3_controller(
+`define	 M_PRE		0	// PRE
+`define  M_NOP1 	`M_PRE+`T_WIDTH // NOP after PRE
+`define  M_MRS1		`M_NOP1+`T_RP // Set MR1 with DLL Set
+`define  M_NOP2		`M_MRS1+`T_WIDTH // NOP after DLL Set
+`define  M_MRS0		`M_NOP2+`T_MRD // Set MR0 with DLL Reset
+`define  M_NOP3		`M_MRS0+`T_WIDTH // NOP after DLL Reset
+`define  M_ZQCS		`M_NOP3+`T_MOD // Send ZQCS
+`define  M_NOP4		`M_ZQCS+`T_WIDTH // NOP after ZQCS
+
+`define  MR_MRS1	`M_NOP4+`T_ZQCS // Set MR1 with DLL Set
+`define  MR_NOP1	`MR_MRS1+`T_WIDTH // NOP after DLL Set
+`define  MR_MRS0	`MR_NOP1+`T_MRD // Set MR0 with DLL Reset
+`define  MR_NOP2	`MR_MRS0+`T_WIDTH // NOP after DLL Reset
+`define  MR_DONE	`MR_NOP2+`T_RLL // DONE
+
+`define  SCR_READ	`T_RCD+1
+`define  SCR_NOP	`SCR_READ+2
+`define  SCR_LSN	`SCR_NOP+`T_RL-2
+`define  SCR_DATA	`SCR_LSN+1
+`define  SCR_DONE	`SCR_DATA+8+`T_RP
+
+`define  SCW_WRITE	`T_RCD+1
+`define  SCW_NOP	`SCW_WRITE+2
+`define  SCW_DQS	`SCW_NOP+`T_WL-4
+`define  SCW_GET	`SCW_DQS+1
+`define  SCW_DM		`SCW_GET+1
+`define  SCW_TSB	`SCW_DM+9
+`define  SCW_DONE	`SCW_TSB+18
+
+module Processing_logic(
 	// Outputs
-	dout, raddr, fillcount, validout, notfull, ready, ck_pad, ckbar_pad,
-	cke_pad, csbar_pad, rasbar_pad, casbar_pad, webar_pad, ba_pad,
-	a_pad, dm_pad, odt_pad, resetbar_pad,
-	// Inouts
-	dq_pad, dqs_pad, dqsbar_pad,
+	DATA_get, 
+	CMD_get,
+	RETURN_put, 
+	RETURN_address, RETURN_data,  //construct RETURN_data_in
+	cs_bar, ras_bar, cas_bar, we_bar,  // read/write function
+	BA, A, DM,
+	DQS_out, DQ_out,
+	ts_con, modify_setting,
 	// Inputs
-	clk, reset, read, cmd, sz, op, din, addr, initddr
+	clk, ck, reset, ready, 
+	CMD_empty, CMD_data_out, DATA_data_out,
+	RETURN_full,
+	DQS_in, DQ_in
 	);
 
-	parameter BL = 8; // Burst Lenght = 8
-	parameter BT = 0;   // Burst Type = Sequential
-	parameter CL = 5;  // CAS Latency (CL) = 4
-	parameter AL = 3;  // Posted CAS# Additive Latency (AL) = 3
+	parameter BL = 8;  // Burst Length
+	parameter BT = 0;  // Burst Type
+	parameter CL = 5;  // CAS Latency (CL)
+	parameter AL = 3;  // Posted CAS# Additive Latency (AL)
+
+
+	input 	 	  clk, ck, reset, ready;
+	input 	 	  CMD_empty, RETURN_full;
+	input [33:0]  CMD_data_out;
+	input [15:0]  DATA_data_out;
+	input [15:0]  DQ_in;
+	input [1:0]   DQS_in;
+
+	output reg 			CMD_get;
+	output reg		 	DATA_get, RETURN_put;
+	output reg [25:0] 	RETURN_address;
+	output wire [15:0] 	RETURN_data;
+	output reg			cs_bar, ras_bar, cas_bar, we_bar;
+	output reg [2:0]	BA;
+	output reg [12:0] 	A;
+	output reg [1:0]	DM;
+	output reg [15:0]  	DQ_out;
+	output reg [1:0]   	DQS_out;
+	output reg ts_con;
+	output reg modify_setting;
 	
+	reg [2:0] Pointer;
+	reg [3:0] state;
+	reg	[11:0] counter;
+	
+	//reg [25:0] CMD_addr ;
+	
+
+	reg listen;
+	
+	reg DM_flag;
+	
+	localparam	[2:0]
+		INIT 		= 3'b000,
+		MODIFY		= 3'b001,
+		DECODE 		= 3'b010,
+		ACTIVATE 	= 3'b011,
+		S_SCR 		= 3'b100,
+		S_ATR 		= 3'b101,
+		S_SCW 		= 3'b110,
+		S_ATW 		= 3'b111;
+		
 	localparam	[2:0]
 		SCR 		= 3'b001,
 		SCW 		= 3'b010;
-
-
-	input 	 	clk;
-	input 	 	reset;
-	input 	 	read;
-	input [2:0] cmd;
-	input [15:0] din;
-	input [25:0] addr;
-	input [1:0] sz;
-	input [2:0] op;
-	output [15:0] dout;
-	output [25:0] raddr;
-	output [5:0]  fillcount;
-	output reg	 validout;
-	output 		 notfull;
-	input 		 initddr;
-	output 		 ready;
-
-	output 		 ck_pad;
-	output 		 ckbar_pad;
-	output 		 cke_pad;
-	output 		 csbar_pad;
-	output 		 rasbar_pad;
-	output 		 casbar_pad;
-	output 		 webar_pad;
-	output [2:0]  ba_pad;
-	output [12:0] a_pad;
-	inout [15:0]  dq_pad;
-	inout [1:0]  dqs_pad;
-	inout [1:0]  dqsbar_pad;
-	output [1:0] dm_pad;
-	output 		 odt_pad;
-	output		 resetbar_pad;
-
-	/*autowire*/
-	// Beginning of automatic wires (for undeclared instantiated-module outputs)
-	wire [15:0]		dataOut;				// From XDFIN of fifo.v
-	wire [15:0]		dq_o;					// From XSSTL of SSTL18DDR2INTERFACE.v
-	wire [1:0]		dqs_o;					// From XSSTL of SSTL18DDR2INTERFACE.v
-	wire [1:0]		dqsbar_o;				// From XSSTL of SSTL18DDR2INTERFACE.v
-	wire			notfull;				// From XDFIN of fifo.v
-	wire [5:0]		CMD_fillcount, RETURN_fillcount;		// From XDFIN of fifo.v
-	wire [5:0]		fillcount;
-	// End of automatics
-
-	//wire 		 ri_i;
-	wire 		 ts_con, ts_i;   
-	reg 		 ck_i;
-	wire 		 cke_i;
-	wire 		 csbar_i;
-	wire 		 rasbar_i;
-	wire 		 casbar_i;
-	wire 		 webar_i;
-	wire [2:0] 	 ba_i;
-	wire [12:0]  a_i;
-	wire [15:0]  dq_i;
-	wire [1:0] 	 dqs_i;
-	wire [1:0] 	 dqsbar_i;
-	wire [1:0] 	 dm_i;
-	wire 		 odt_i;
-	wire		 resetbar_i;
-
-	wire 		csbar, init_csbar;
-	wire 		rasbar, init_rasbar;
-	wire 		casbar, init_casbar;
-	wire 		webar, init_webar;
-	wire 		resetbar, init_resetbar;
-	wire [2:0] 	ba, init_ba;
-	wire [12:0]	a,init_a;
-	wire [1:0] 	init_dm;
-	wire 		init_cke;
-	wire 		init_ts_con;
-	wire 		ri_con;
-	
-	wire [15:0] IN_data_out;
-	wire [33:0] CMD_data_in, CMD_data_out;
-	wire [41:0] RETURN_data_in, RETURN_data_out;
-	wire 		IN_empty, IN_full, CMD_empty, CMD_full, RETURN_empty, RETURN_full;
-	wire 		IN_get, CMD_get, RETURN_put, RETURN_get;
-	reg 		IN_put, CMD_put;
-	
-	// CK divider
-	always @(posedge clk) 
-	   if (reset==1)
-	   begin
-		   ck_i <= 0;
-	   end
-	   else
-		   ck_i <= ~ck_i;  // 312.5 MHz Clock
-
-
-	// Input data FIFO
-	FIFO #(.DEPTH_P2(5), .WIDTH(16)) FIFO_IN (/*autoinst*/
-						  .clk					(clk),
-						  .reset				(reset),
-						  .data_in              (din),
-						  .put  				(IN_put),
-						  .get					(IN_get),
-						  .data_out				(IN_data_out),
-						  .empty			    (IN_empty),
-						  .full			     	(IN_full),
-						  .fillcount			(fillcount)
-						  ); 
-	// Command FIFO						  
-	FIFO #(.DEPTH_P2(5), .WIDTH(34)) FIFO_CMD (/*autoinst*/
-						  .clk					(clk),
-						  .reset				(reset),
-						  .data_in              (CMD_data_in),
-						  .put  				(CMD_put),
-						  .get					(CMD_get),
-						  .data_out				(CMD_data_out),
-						  .empty			    (CMD_empty),
-						  .full			     	(CMD_full),
-						  .fillcount			(CMD_fillcount)
-						  ); 
-	// Return DATA and address FIFO	
-	FIFO #(.DEPTH_P2(5), .WIDTH(42)) FIFO_RETURN (/*autoinst*/
-						  .clk					(clk),
-						  .reset				(reset),
-						  .data_in              (RETURN_data_in),
-						  .put  				(RETURN_put),
-						  .get					(RETURN_get),
-						  .data_out				(RETURN_data_out),
-						  .empty			    (RETURN_empty),
-						  .full			     	(RETURN_full),
-						  .fillcount			(RETURN_fillcount)
-						  ); 
-						  
-	
-	// DDR2 Initialization engine
-	ddr3_init_engine XINIT (
-						   // Outputs
-						   .ready				(ready_i),
-						   .csbar				(init_csbar),
-						   .rasbar				(init_rasbar),
-						   .casbar				(init_casbar),
-						   .webar				(init_webar),
-						   .ba					(init_ba[2:0]),
-						   .a					(init_a[12:0]),
-						   .odt					(init_odt),
-						   .ts_con				(init_ts_con),
-						   .cke                 (init_cke),
-						   .resetbar			(init_resetbar),
-						   // Inputs
-						   .clk					(clk),
-						   .reset				(reset),
-						   .init				(initddr),
-						   .ck					(ck_i)		   );
-						   
-	Processing_logic  XPL  (
-							// Outputs
-							.DATA_get			(IN_get), 
-							.CMD_get			(CMD_get),
-							.RETURN_put			(RETURN_put), 
-							.RETURN_address		(RETURN_data_in[41:16]), 
-							.RETURN_data		(RETURN_data_in[15:0]),  
-							.cs_bar				(csbar), 
-							.ras_bar			(rasbar), 
-							.cas_bar			(casbar), 
-							.we_bar				(webar), 
-							.BA					(ba[2:0]),
-							.A					(a[12:0]), 
-							.DM					(dm_i[1:0]),
-							.DQS_out			(dqs_i[1:0]), 
-							.DQ_out				(dq_i[15:0]),
-							.ts_con				(ts_con),
-							.modify_setting     (modify_setting),
-							// Inputs
-							.clk				(clk), 
-							.ck					(ck_i), 
-							.reset				(reset), 
-							.ready				(ready_i), 
-							.CMD_empty			(CMD_empty), 
-							.CMD_data_out		(CMD_data_out),
-							.DATA_data_out		(IN_data_out),
-							.RETURN_full		(RETURN_full),
-							.DQS_in				(dqs_o[1:0]), 
-							.DQ_in				(dq_o[15:0])	);
-
-	// FIFO control logic
-	always @(cmd, notfull)
-	begin
-		if (!notfull)
-		begin
-			CMD_put = 0;
-			IN_put = 0;
-		end
-		else
-		begin
-			case (cmd)
-			
-			SCR:
-			begin
-				CMD_put = 1;
-				IN_put = 0;
-			end
-			
-			SCW:
-			begin
-				CMD_put = 1;
-				IN_put = 1;
-			end
-			
-			default:
-			begin
-				CMD_put = 0;
-				IN_put = 0;
-			end
-			
-			endcase
-		end
-	end
-	
-	// validout
-	always @(posedge clk)
-	begin
-		if (reset)
-			validout <= 0;
-		else
-			validout <= !RETURN_empty;
-	end
 		
+	localparam	[3:0]
+		NOP			= 4'b0111,
+		ACT			= 4'b0011,
+		READ		= 4'b0101,
+		WRITE		= 4'b0100,
+		PRE			= 4'b0010,
+		MRS			= 4'b0000,
+		ZQCS		= 4'b0110;	
 		
 
-	// FIFO signals
-	assign		 CMD_data_in  = {cmd, addr, sz, op};
-	assign		 RETURN_get	  = read;
-	assign		 raddr        = RETURN_data_out[41:16];
-	assign		 dout		  = RETURN_data_out[15:0];
-	assign		 notfull	  = !IN_full && !CMD_full;
-	assign		 ready        = ready_i && modify_setting;
-	
-	// Output Mux for control signals
-	assign		 ts_i     = (ready_i) ? ts_con : init_ts_con;
-	assign 		 a_i 	  = (ready_i) ? a      : init_a;
-	assign 		 ba_i 	  = (ready_i) ? ba     : init_ba;
-	assign 		 csbar_i  = (ready_i) ? csbar  : init_csbar;
-	assign 		 rasbar_i = (ready_i) ? rasbar : init_rasbar;
-	assign 		 casbar_i = (ready_i) ? casbar : init_casbar;
-	assign 		 webar_i  = (ready_i) ? webar  : init_webar;	
-	assign		 resetbar_i = init_resetbar && ~reset;
-	assign		 dqsbar_i = ~dqs_i;
-	assign 		 cke_i 	  = init_cke;
-	assign 		 odt_i 	  = init_odt;
-	assign 		 ri_con = 1;
+always @(posedge clk)
+    if (reset)
+	begin
+		modify_setting <= 0;
+		
+	    counter <= 0;
+		state <= INIT;
+		
+		CMD_get <= 0;
+		DATA_get <= 0;
+		RETURN_put <= 0;
+		
+		ts_con <= 0;
+		DM_flag <= 0;
+		{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
+		
+		A <= 0;
+		BA <= 0;
+		listen <= 0;
+		Pointer <= 0;		
+	end
+	else
+	  begin
+		
+		case (state)
+		
+			INIT:
+			begin
+				if (ready)
+				begin
+					if (!counter[0])
+					begin
+						if (!modify_setting)
+							state <= MODIFY;
+						if (!CMD_empty && !RETURN_full)
+						begin
+							CMD_get <= 1;	
+							counter <= counter + 1;
+						end
+					end
+					else
+					begin
+						CMD_get <= 0;
+						counter <= 0;
+						state <= DECODE;
+					end
+				end
+			end
+			
+			MODIFY:
+			begin
+				counter <= counter + 1;
+				 case (counter)
+				 
+					`M_PRE:  begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= PRE; // EMRS command
+								A[10] <= 1;
+							 end
+							 
+					`M_NOP1: begin
+								{cs_bar,ras_bar,cas_bar,we_bar} <= NOP;
+							 end
+							 
+					`M_MRS1: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command 
+								A[12] <= 0; // Output enabled
+								A[11] <= 0; // TDQS enabled for 8 banks
+								A[10] <= 0;
+								{A[9], A[6], A[2]} <= 3'b001; // A[9,6,2] RTT disabled
+								A[8] <= 0;
+								A[7] <= 0; // write leveling disabled					 
+								{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
+								A[4:3] <= 2'b01; // AL = CL - 1 = 4
+								A[0] <= 0; // DLL enabled
+								BA <= 3'b001;
+							end
+							
+					`M_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
 
-	SSTL18DDR3INTERFACE XSSTL (/*autoinst*/
-							  // Outputs
-							  .ck_pad			(ck_pad),
-							  .ckbar_pad		(ckbar_pad),
-							  .cke_pad			(cke_pad),
-							  .csbar_pad		(csbar_pad),
-							  .rasbar_pad		(rasbar_pad),
-							  .casbar_pad		(casbar_pad),
-							  .webar_pad		(webar_pad),
-							  .ba_pad			(ba_pad[2:0]),
-							  .a_pad			(a_pad[12:0]),
-							  .dm_pad			(dm_pad[1:0]),
-							  .odt_pad			(odt_pad),
-							  .resetbar_pad		(resetbar_pad),
-							  .dq_o				(dq_o[15:0]),
-							  .dqs_o			(dqs_o[1:0]),
-							  .dqsbar_o			(dqsbar_o[1:0]),							  
-							  // Inouts
-							  .dq_pad			(dq_pad[15:0]),
-							  .dqs_pad			(dqs_pad[1:0]),
-							  .dqsbar_pad		(dqsbar_pad[1:0]),
-							  // Inputs
-							  .ri_i				(ri_con),
-							  .ts_i				(ts_i),
-							  .ck_i				(ck_i),
-							  .cke_i			(cke_i),
-							  .csbar_i			(csbar_i),
-							  .rasbar_i			(rasbar_i),
-							  .casbar_i			(casbar_i),
-							  .webar_i			(webar_i),
-							  .ba_i				(ba_i[2:0]),
-							  .a_i				(a_i[12:0]),
-							  .dq_i				(dq_i[15:0]),
-							  .dqs_i			(dqs_i[1:0]),
-							  .dqsbar_i			(dqsbar_i[1:0]),
-							  .dm_i				(dm_i[1:0]),
-							  .odt_i			(odt_i),
-							  .resetbar_i		(resetbar_i));
+					`M_MRS0: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
+								A[12] <= 0; // DLL off
+								A[11:9] <= 3'b010; // Write Recovery = 6
+								A[8] <= 1; // DLL Reset
+								A[7] <= 0;
+								A[6:4] <= 3'b001; // CAS latency = 5
+								A[3] <= 0; // Read type = sequential
+								A[2] <= 0;
+								A[1:0] <= 2'b10; // Burst length = 4;
+								BA <= 3'b000; // MRS
+							end
+								
+					`M_NOP3: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+
+					`M_ZQCS: begin
+							{cs_bar, ras_bar, cas_bar, we_bar} <= ZQCS; 
+							A[10] <= 0; 
+							end
+							
+					`M_NOP4: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command	
+
+					`MR_MRS1: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command
+								A[12] <= 0; // Output enabled
+								A[11] <= 0; // TDQS enabled for 8 banks
+								A[10] <= 0;
+								{A[9], A[6], A[2]} <= 3'b000; // A[9,6,2] RTT disabled
+								A[8] <= 0;
+								A[7] <= 0; // write leveling disabled					 
+								{A[5], A[1]} <= 2'b00; // A[5,1] Output driver
+								A[4:3] <= 2'b10; // AL = CL - 2 = 3
+								A[0] <= 0; // DLL enabled
+								BA <= 3'b001;
+							end
+							
+					`MR_NOP1: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+
+					`MR_MRS0: begin
+								{cs_bar, ras_bar, cas_bar, we_bar} <= MRS; // EMRS command  
+								A[12] <= 0; // DLL off
+								A[11:9] <= 3'b010; // Write Recovery = 6
+								A[8] <= 1; // DLL Reset
+								A[7] <= 0;
+								A[6:4] <= 3'b001; // CAS latency = 5
+								A[3] <= 0; // Read type = sequential
+								A[2] <= 0;
+								A[1:0] <= 2'b00; // Burst length = 8;
+								BA <= 3'b000; // MRS
+							end
+								
+					`MR_NOP2: {cs_bar, ras_bar, cas_bar, we_bar} <= NOP; // NOP command
+					
+					`MR_DONE: begin
+						state <= INIT; // done
+						modify_setting <= 1;
+						counter <= 0;
+						end
+					
+				endcase
+			end
+			
+			DECODE:
+			begin
+				//CMD_addr <= CMD_data_out[30:5];
+				case (CMD_data_out[33:31])			
+
+					SCR, SCW:
+					if (ck)
+					begin
+						{cs_bar, ras_bar, cas_bar, we_bar} <= ACT;
+						A[12:0] <= CMD_data_out[27:15];
+						BA <= CMD_data_out[30:28];
+						state <= ACTIVATE;
+					end
+					
+					default:
+						state <= INIT;
+				
+				endcase
+			end
+			
+			ACTIVATE:
+			begin
+				counter <= counter + 1;
+				if (counter[0])
+				begin
+					{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
+					case (CMD_data_out[33:31])
+					
+						SCR: state <= S_SCR;
+						
+						SCW: state <= S_SCW;
+						
+						default: state <= INIT;
+						
+					endcase
+				end
+			end
+			
+			S_SCR:
+			begin
+				counter <= counter + 1;
+				case (counter)
+					
+					`SCR_READ:
+					begin
+						{cs_bar, ras_bar, cas_bar, we_bar} <= READ;
+						A[10] <= 1; // auto precharge
+						//A[9:0] <= CMD_addr[9:0];
+						A[9:0] <= CMD_data_out[14:5];
+					end
+					
+					`SCR_NOP:
+					begin
+						{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
+					end
+					
+					`SCR_LSN:
+					begin
+						listen <= 1;
+					end
+					
+					`SCR_DATA:
+					begin
+						RETURN_put <= 1;
+						listen <= 0;
+						RETURN_address <= CMD_data_out[30:5];
+					end
+					
+					`SCR_DATA+1:
+					begin
+						RETURN_put <= 0;
+					end
+					
+/* 					`SCR_DATA+2: 
+					//`SCR_DATA+3, `SCR_DATA+4, `SCR_DATA+5, `SCR_DATA+6, `SCR_DATA+7:
+					begin
+						RETURN_put <= 0;
+					end	 */		
+					
+					`SCR_DONE:
+					begin
+						state <= INIT;
+						counter <= 0;
+					end					
+					
+				endcase
+			end
+			
+			S_SCW:
+			begin
+				counter <= counter + 1;
+				case (counter)
+				
+					`SCW_WRITE:
+					begin
+						{cs_bar, ras_bar, cas_bar, we_bar} <= WRITE;
+						A[10] <= 1; // auto precharge
+						//A[9:0] <= CMD_addr[9:0];
+						A[9:0] <= CMD_data_out[14:5];
+					end
+					
+					`SCW_NOP:
+					begin
+						{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
+					end
+					
+					`SCW_DQS:
+					begin
+						ts_con <= 1;
+						DQS_out <= 0;
+					end
+					
+					`SCW_GET:
+					begin
+						DATA_get <= 1;
+						DQS_out <= ~DQS_out;
+					end
+					
+					`SCW_DM:
+					begin
+						if (CMD_data_out[7:5] == 0)
+							DM_flag <= 1;
+						DATA_get <= 0;
+						DQS_out <= ~DQS_out;
+					end
+					
+					`SCW_DM+1, `SCW_DM+2, `SCW_DM+3, `SCW_DM+4, `SCW_DM+5, `SCW_DM+6, `SCW_DM+7, `SCW_DM+8: 
+					begin
+						DQS_out <= ~DQS_out;
+						if (counter == `SCW_DM + CMD_data_out[7:5])
+							DM_flag <= 1;
+						if (DM_flag)
+							DM_flag <= 0;
+					end
+					
+					`SCW_TSB:
+					begin
+						ts_con <= 0;
+					end
+					
+					`SCW_DONE:
+					begin
+						state <= INIT;
+						counter <= 0;
+					end
+					
+				endcase
+			end
+		
+		endcase
+		
+	  end				
+				
+			
+
+ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in, Pointer[2:0], DQ_in, reset);
 
 
-
-endmodule // ddr2_controller
+always @(negedge clk)
+  begin
+    DQ_out <= DATA_data_out;
+    if(DM_flag)
+        DM <= 2'b00;
+    else
+        DM <= 2'b11;	
+  end
+ 
+endmodule // ddr_controller
