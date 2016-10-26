@@ -26,8 +26,8 @@
 `define  SCR_READ	`T_RCD+1
 `define  SCR_NOP	`SCR_READ+2
 `define  SCR_LSN	`SCR_NOP+`T_RL-2
-`define  SCR_LSNB	`SCR_LSN+1
-`define  SCR_DONE	`SCR_LSNB+8+`T_RP
+`define  SCR_DATA	`SCR_LSN+1
+`define  SCR_DONE	`SCR_DATA+8+`T_RP
 
 `define  SCW_WRITE	`T_RCD+1
 `define  SCW_NOP	`SCW_WRITE+2
@@ -312,28 +312,23 @@ always @(posedge clk)
 						{cs_bar, ras_bar, cas_bar, we_bar} <= NOP;
 					end
 					
-/* 					`SCR_LSN:
-					begin
-						Pointer <= 0;					
-					end */
-					
 					`SCR_LSN:
 					begin
 						listen <= 1;
 					end
 					
-					`SCR_LSNB:
+					`SCR_DATA:
 					begin
 						listen <= 0;
 						RETURN_address <= CMD_data_out[30:5];
 					end
 					
-					`SCR_LSNB+2:
+					`SCR_DATA+1:
 					begin
 						RETURN_put <= 1;
 					end
-					`SCR_LSNB+3: 
-					//`SCR_LSNB+4, `SCR_LSNB+5, `SCR_LSNB+6, `SCR_LSNB+7, `SCR_LSNB+8:
+					`SCR_DATA+2: 
+					//`SCR_DATA+3, `SCR_DATA+4, `SCR_DATA+5, `SCR_DATA+6, `SCR_DATA+7 :
 					begin
 						RETURN_put <= 0;
 					end			
@@ -414,7 +409,7 @@ always @(posedge clk)
 				
 			
 
-ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in[0], Pointer[2:0], DQ_in, reset);
+	ddr3_ring_buffer8 ring_buffer(RETURN_data, listen, DQS_in[0], Pointer[2:0], DQ_in, reset);
 
 
 always @(negedge clk)
